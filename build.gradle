@@ -46,8 +46,8 @@ task printClasspath {
     }
 }
 
-archivesBaseName = "chaincode"
-mainClassName="example.SimpleSample"
+archivesBaseName = "audit-log-service"
+mainClassName="com.vp.blockchain.chaincode.AuditLogChaincode"
 
 run {
     if (project.hasProperty("appArgs")) {
