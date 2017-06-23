@@ -4,23 +4,22 @@
 package com.vp.blockchain.chaincode;
 
 import static java.lang.String.format;
+import static java.nio.charset.StandardCharsets.UTF_8;
+
+import javax.json.Json;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.hyperledger.fabric.shim.ChaincodeBase;
 import org.hyperledger.fabric.shim.ChaincodeStub;
+import org.hyperledger.fabric.shim.ChaincodeBase;
 
 /**
  * @author kgangatharan
  *
  */
 public class AuditLogChaincode extends ChaincodeBase {
-
 	private static Log log = LogFactory.getLog(AuditLogChaincode.class);
 
-	/* (non-Javadoc)
-	 * @see org.hyperledger.fabric.shim.ChaincodeBase#init(org.hyperledger.fabric.shim.ChaincodeStub)
-	 */
 	@Override
 	public Response init(ChaincodeStub stub) {
 		final String function = stub.getFunction();
@@ -30,28 +29,95 @@ public class AuditLogChaincode extends ChaincodeBase {
 		return init(stub, stub.getParameters().stream().toArray(String[]::new));
 	}
 
-	/* (non-Javadoc)
-	 * @see org.hyperledger.fabric.shim.ChaincodeBase#invoke(org.hyperledger.fabric.shim.ChaincodeStub)
-	 */
 	@Override
-	public Response invoke(ChaincodeStub arg0) {
-		// TODO Implement invoke service
-		return null;
+	public Response invoke(ChaincodeStub stub) {
+		try {
+			final String function = stub.getFunction();
+			final String[] args = stub.getParameters().stream().toArray(String[]::new);
+
+			switch (function) {
+			case "transfer":
+				return transfer(stub, args);
+			case "put":
+				for (int i = 0; i < args.length; i += 2)
+					stub.putStringState(args[i], args[i + 1]);
+				return newSuccessResponse();
+			case "del":
+				for (String arg : args)
+					stub.delState(arg);
+				return newSuccessResponse();
+			case "query":
+				return query(stub, function, args);
+			default:
+				return newErrorResponse(format("Unknown function: %s", function));
+			}
+		} catch (Throwable e) {
+			return newErrorResponse(e);
+		}
+	}
+
+	private Response transfer(ChaincodeStub stub, String[] args) {
+		if (args.length != 3) throw new IllegalArgumentException("Incorrect number of arguments. Expecting: transfer(from, to, amount)");
+
+		final String fromKey = args[0];
+		final String toKey = args[1];
+		final String amount = args[2];
+
+		// get state of the from/to keys
+		final String fromKeyState = stub.getStringState(fromKey);
+		final String toKeyState = stub.getStringState(toKey);
+
+		// parse states as integers
+		int fromAccountBalance = Integer.parseInt(fromKeyState);
+		int toAccountBalance = Integer.parseInt(toKeyState);
+
+		// parse the transfer amount as an integer
+		int transferAmount = Integer.parseInt(amount);
+
+		// make sure the transfer is possible
+		if (transferAmount > fromAccountBalance) {
+			throw new IllegalArgumentException("Insufficient asset holding value for requested transfer amount.");
+		}
+
+		// perform the transfer
+		log.info(String.format("Tranferring %d holdings from %s to %s", transferAmount, fromKey, toKey));
+		int newFromAccountBalance = fromAccountBalance - transferAmount;
+		int newToAccountBalance = toAccountBalance + transferAmount;
+		log.info(String.format("New holding values will be: %s = %d, %s = %d", fromKey, newFromAccountBalance, toKey, newToAccountBalance));
+		stub.putStringState(fromKey, Integer.toString(newFromAccountBalance));
+		stub.putStringState(toKey, Integer.toString(newToAccountBalance));
+		log.info("Transfer complete.");
+
+		return newSuccessResponse(format("Successfully transferred %d assets from %s to %s.", transferAmount, fromKey, toKey));
 	}
 
 	private Response init(ChaincodeStub stub, String[] args) {
-		//TODO Implement init service
+		if (args.length != 4) throw new IllegalArgumentException("Incorrect number of arguments. Expecting: init(account1, amount1, account2, amount2)");
+
+		final String accountKey1 = args[0];
+		final String accountKey2 = args[2];
+		final String account1Balance = args[1];
+		final String account2Balance = args[3];
+
+		stub.putStringState(accountKey1, new Integer(account1Balance).toString());
+		stub.putStringState(accountKey2, new Integer(account2Balance).toString());
 
 		return newSuccessResponse();
 	}
 
-	/**
-	 * @param args
-	 */
-	public static void main(String[] args) {
-		log.info(String.format("Starting chaincode for audit log service..."));
-		new AuditLogChaincode().start(args);
-		log.info(String.format("Started chaincode for audit log service"));
+	public Response query(ChaincodeStub stub, String function, String[] args) {
+		if (args.length != 1) throw new IllegalArgumentException("Incorrect number of arguments. Expecting: query(account)");
+
+		final String accountKey = args[0];
+
+		return newSuccessResponse(Json.createObjectBuilder()
+				.add("Name", accountKey)
+				.add("Amount", Integer.parseInt(stub.getStringState(accountKey)))
+				.build().toString().getBytes(UTF_8));
+
 	}
 
+	public static void main(String[] args) throws Exception {
+		new AuditLogChaincode().start(args);
+	}
 }
